@@ -139,20 +139,28 @@ def postToChatAndSleep(post, bot, chat_id, sleeptime):
 #Posts last 25 media posts from every Facebook page in botsettings.ini
 @run_async
 def last25(bot, job):
-    page_posts_nodes = (
-        graph.get_object(
-            id='{}/posts'.format(page),
-            fields='full_picture,created_time,type,message,source,link')
-        for page in facebook_pages)
+    chat_id = job.context
+    
+    print('Accessing Facebook...')
+    pages_dict = graph.get_objects(
+        ids=facebook_pages,
+        fields='name,posts{full_picture,created_time,type,message,source,link}')
+    
+    print('Preparing to start list loop...')
+    for page in facebook_pages:
+        try:
+            print('Getting list of posts for page {}...'.format(
+                pages_dict[page]['name']))
+            
+            #Get list of last 25 posts
+            posts_data = pages_dict[page]['posts']['data']
 
-    for page_posts in page_posts_nodes:
-        data = page_posts['data']
-        paging = page_posts['paging']
-        
-        chat_id = job.context
+            for post in reversed(posts_data):
+                postToChatAndSleep(post, bot, chat_id, 1)
 
-        for post in reversed(data):
-            postToChatAndSleep(post, bot, chat_id, 1)
+        except:
+            print('Page error.')
+            continue
 
 
 def last25_job(bot, update, job_queue):
