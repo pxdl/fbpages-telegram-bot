@@ -95,39 +95,54 @@ def checkIfAllowedAndPost(post, bot, chat_id):
 
 
 def postPhotoToChat(post, bot, chat_id):
-    if 'message' in post: # If the picture post contains a message
+    if 'message' in post:
+        post_caption = post['message']
         print('Posting photo with message...')
-        bot.send_photo(
-            chat_id=chat_id,
-            photo=post['full_picture'],
-            caption=post['message'])
     else:
+        post_caption = None
         print('Posting photo...')
-        bot.send_photo(chat_id=chat_id, photo=post['full_picture'])
+
+    bot.send_photo(
+        chat_id=chat_id,
+        photo=post['full_picture'],
+        caption=post_caption)
 
 
 def postVideoToChat(post, bot, chat_id):
-    #TODO: If youtube link, post the link (check post['caption'])
-    if 'message' in post: # If the video post contains a message
-        print('Posting video with message...')
-        #print(post['source'])
-        try:
-            bot.send_video(
-                chat_id=chat_id,
-                video=getDirectURLVideo(post['link']),#source is inconsistent
-                caption=post['message'])
-        except TelegramError:
-            print('Could not post video')
-            #TODO: Download with youtube-dl in case post['source'] fails
+    #If youtube link, post the link
+    if 'caption' in post and post['caption'] == 'youtube.com':
+        print('Sending YouTube link...')
+        bot.send_message(
+            chat_id=chat_id,
+            text=post['link']
+            )
+
     else:
-        print('Posting video...')
-        #print(post['source'])
+        if 'message' in post:
+            post_caption = post['message']
+            print('Posting video with message...')
+        else:
+            post_caption = None
+            print('Posting video...')
+
         try:
             bot.send_video(
                 chat_id=chat_id,
-                video=getDirectURLVideo(post['link']))#source is inconsistent
-        except TelegramError:
+                video=post['source'],
+                caption=post_caption)
+        except TelegramError:        #If the API can't send the video
             print('Could not post video')
+            print('Trying with youtube-dl...')
+            try:
+                bot.send_video(
+                    chat_id=chat_id,
+                    video=getDirectURLVideo(post['link']),
+                    caption=post_caption)
+            except TelegramError:    #If the API still can't send the video
+                print('Could not post video, sending direct link...')
+                bot.send_message(    #Send direct link as a message
+                        chat_id=chat_id,
+                        text=post['source']+'\n'+post_caption)
 
 
 def postToChatAndSleep(post, bot, chat_id, sleeptime):
@@ -144,9 +159,10 @@ def last25(bot, job):
     print('Accessing Facebook...')
     pages_dict = graph.get_objects(
         ids=facebook_pages,
-        fields='name,posts{full_picture,created_time,type,message,source,link}')
+        fields='name,posts{\
+                           full_picture,created_time,type,\
+                           message,source,link,caption}')
     
-    print('Preparing to start list loop...')
     for page in facebook_pages:
         try:
             print('Getting list of posts for page {}...'.format(
@@ -155,7 +171,7 @@ def last25(bot, job):
             #Get list of last 25 posts
             posts_data = pages_dict[page]['posts']['data']
 
-            for post in reversed(posts_data):
+            for post in reversed(posts_data):   #Chronological order
                 postToChatAndSleep(post, bot, chat_id, 1)
 
         except:
@@ -166,7 +182,8 @@ def last25(bot, job):
 def last25_job(bot, update, job_queue):
     update.message.reply_text('Sending...')
 
-    job_last25 = Job(last25, 1.0, repeat=False, context=channel_id)
+    job_last25 = Job(last25, 0.0, repeat=False,
+                     context=channel_id)
     job_queue.put(job_last25)
 
 
