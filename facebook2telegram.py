@@ -4,13 +4,13 @@ import ast                                      #Used for ini settings
 import ConfigParser
 import logging
 from time import sleep
-from datetime import datetime                   #Used for date comparison
+#from datetime import datetime                   #Used for date comparison
 
 import telegram                                 #telegram-bot-python
 from telegram.ext import Updater
 from telegram.ext import CommandHandler
 from telegram.ext import Job
-from telegram.ext.dispatcher import run_async   #Needed for parallelism
+#from telegram.ext.dispatcher import run_async   #Needed for parallelism
 from telegram.error import (TelegramError)      #Error handling
 
 import facebook                                 #facebook-sdk
@@ -39,6 +39,15 @@ allow_photo = Config.getboolean('facebook', 'photo')
 allow_video = Config.getboolean('facebook', 'video')
 allow_link = Config.getboolean('facebook', 'link')
 allow_shared = Config.getboolean('facebook', 'shared')
+allow_message = Config.getboolean('facebook', 'message')
+print('Loaded settings:')
+print('Refresh rate: ' + facebook_refresh_rate)
+print('Allow Status: ' + str(allow_status))
+print('Allow Photo: ' + str(allow_photo))
+print('Allow Video: ' + str(allow_video))
+print('Allow Link: ' + str(allow_link))
+print('Allow Shared: ' + str(allow_shared))
+print('Allow Message: ' + str(allow_message))
 graph = facebook.GraphAPI(access_token=facebook_token, version='2.7')
 #page_count = 0
 #last_date_tg = 0
@@ -53,8 +62,6 @@ job_queue = updater.job_queue
 
 
 def getDirectURLVideo(URL):
-
-    print('Using youtube-dl...')
     with ydl:
         result = ydl.extract_info(
             '{}'.format(URL),
@@ -83,55 +90,43 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         print('Accessing parent post...')
         checkIfAllowedAndPost(parent_post, bot, chat_id)
         return True
-    elif post['type'] == 'photo' and allow_photo:
-        print('This is a photo')
-        postPhotoToChat(post, bot, chat_id)
+
+    if 'message' in post and allow_message:
+        post_message = post['message']
+    else:
+        post_message = ''
+
+    if post['type'] == 'photo' and allow_photo:
+        print('Posting photo...')
+        postPhotoToChat(post, post_message, bot, chat_id)
         return True
     elif post['type'] == 'video' and allow_video:
-        print('This is a video')
-        postVideoToChat(post, bot, chat_id)
+        print('Posting video...')
+        postVideoToChat(post, post_message, bot, chat_id)
         return True
     elif post['type'] == 'status' and allow_status:
-        print('This is a status')
         print('Posting status...')
         bot.send_message(
             chat_id=chat_id,
             text=post['message'])
         return True
     elif post['type'] == 'link' and allow_link:
-        print('This is a link')
-        #External link
-        if 'message' in post:
-            post_message = post['message']
-            print('Posting link with message...')
-        else:
-            post_message = ''
-            print('Posting link...')
-
-        bot.send_message(
-            chat_id=chat_id,
-            text=post['link']+'\n'+post_message)
+        print('Posting link...')
+        postLinkToChat(post, post_message, bot, chat_id)        
         return True
     else:
         print('This post is a {}, skipping...'.format(post['type']))
         return False
 
 
-def postPhotoToChat(post, bot, chat_id):
-    if 'message' in post:
-        post_message = post['message']
-        print('Posting photo with message...')
-    else:
-        post_message = ''
-        print('Posting photo...')
-
+def postPhotoToChat(post, post_message, bot, chat_id):
     bot.send_photo(
         chat_id=chat_id,
         photo=post['full_picture'],
         caption=post_message)
 
 
-def postVideoToChat(post, bot, chat_id):
+def postVideoToChat(post, post_message, bot, chat_id):
     #If youtube link, post the link
     if 'caption' in post and post['caption'] == 'youtube.com':
         print('Sending YouTube link...')
@@ -140,13 +135,6 @@ def postVideoToChat(post, bot, chat_id):
             text=post['link'])
 
     else:
-        if 'message' in post:
-            post_message = post['message']
-            print('Posting video with message...')
-        else:
-            post_message = ''
-            print('Posting video...')
-
         try:
             bot.send_video(
                 chat_id=chat_id,
@@ -167,6 +155,16 @@ def postVideoToChat(post, bot, chat_id):
                         text=post['source']+'\n'+post_message)
 
 
+def postLinkToChat(post, post_message, bot, chat_id):
+    if post['link'] in post_message:
+        post_link = ''
+    else:
+        post_link = post['link']
+
+    bot.send_message(
+        chat_id=chat_id,
+        text=post_link+'\n'+post_message)
+
 def postToChatAndSleep(post, bot, chat_id, sleeptime):
     if checkIfAllowedAndPost(post, bot, chat_id):
         print('Sleeping...')
@@ -177,7 +175,6 @@ def postToChatAndSleep(post, bot, chat_id, sleeptime):
 #@run_async
 def last25(bot, job):
     chat_id = job.context
-    
     print('Accessing Facebook...')
     pages_dict = graph.get_objects(
         ids=facebook_pages,
@@ -214,8 +211,6 @@ def periodicUpdate(bot, job):
 
 
 def createSubscription(bot, update, job_queue, chat_data):
-    chat_id = update.message.chat_id
-
     job_checkNew = Job(
         periodicUpdate, facebook_refresh_rate,
         repeat=True, context=update.message.chat_id)
