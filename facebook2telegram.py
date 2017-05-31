@@ -78,7 +78,16 @@ dispatcher = updater.dispatcher
 job_queue = updater.job_queue
 
 
-def getDirectURLVideo(URL):
+def getDirectURLVideo(video_id):
+    print('Getting direct URL...')
+    video_post = graph.get_object(
+            id=video_id,
+            fields='source')
+
+    return video_post['source']
+
+
+def getDirectURLVideoYDL(URL):
     with ydl:
         result = ydl.extract_info(
             '{}'.format(URL),
@@ -93,6 +102,7 @@ def getDirectURLVideo(URL):
         video = result
 
     video_url = video['url']
+    print(video_url)
 
     return video_url
 
@@ -103,7 +113,7 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         parent_post = graph.get_object(
             id=post['parent_id'],
             fields='full_picture,created_time,type,\
-                    message,source,link,caption,parent_id')
+                    message,source,link,caption,parent_id,object_id')
         print('Accessing parent post...')
         checkIfAllowedAndPost(parent_post, bot, chat_id)
         return True
@@ -144,6 +154,15 @@ def postPhotoToChat(post, post_message, bot, chat_id):
 
 
 def postVideoToChat(post, post_message, bot, chat_id):
+'''This function tries to pass 3 different URLs to the Telegram API
+   instead of downloading the video file locally to save bandwidth.
+   First link: Direct video source
+   Second link: Direct video source gotten from youtube-dl
+   Third link: Direct video source with smaller resolution
+   If all three fail, it then (TODO: 4th OPTION - DOWNLOAD FILE LOCALLY
+   FOR UPLOAD) sends the first link as a message, followed by the post's
+   message'''
+    direct_link = getDirectURLVideo(post['object_id'])
     #If youtube link, post the link
     if 'caption' in post and post['caption'] == 'youtube.com':
         print('Sending YouTube link...')
@@ -155,21 +174,27 @@ def postVideoToChat(post, post_message, bot, chat_id):
         try:
             bot.send_video(
                 chat_id=chat_id,
-                video=post['source'],
+                video=direct_link,
                 caption=post_message)
         except TelegramError:        #If the API can't send the video
-            print('Could not post video')
-            print('Trying with youtube-dl...')
             try:
+                print('Could not post video, trying youtube-dl...')
                 bot.send_video(
                     chat_id=chat_id,
-                    video=getDirectURLVideo(post['link']),
+                    video=getDirectURLVideoYDL(post['link']),
                     caption=post_message)
-            except TelegramError:    #If the API still can't send the video
-                print('Could not post video, sending direct link...')
-                bot.send_message(    #Send direct link as a message
+            except TelegramError:
+                try:
+                    print('Could not post video, trying smaller resolution...')
+                    bot.send_video(
                         chat_id=chat_id,
-                        text=post['source']+'\n'+post_message)
+                        video=post['source'],
+                        caption=post_message)
+                except TelegramError:    #If the API still can't send the video
+                    print('Could not post video, sending link...')
+                    bot.send_message(    #Send direct link as a message
+                        chat_id=chat_id,
+                        text=direct_link+'\n'+post_message)
 
 
 def postLinkToChat(post, post_message, bot, chat_id):
@@ -198,7 +223,7 @@ def last25(bot, job):
             ids=facebook_pages,
             fields='name,posts{\
                                full_picture,created_time,type,\
-                               message,source,link,caption,parent_id}')
+                               message,source,link,caption,parent_id,object_id}')
     except facebook.GraphAPIError:
         print('Error: Could not get Facebook posts.')
         return
