@@ -37,6 +37,8 @@ facebook_refresh_rate = Config.get('facebook', 'refreshrate')
 allow_status = Config.getboolean('facebook', 'status')
 allow_photo = Config.getboolean('facebook', 'photo')
 allow_video = Config.getboolean('facebook', 'video')
+allow_link = Config.getboolean('facebook', 'link')
+allow_shared = Config.getboolean('facebook', 'shared')
 graph = facebook.GraphAPI(access_token=facebook_token, version='2.7')
 #page_count = 0
 #last_date_tg = 0
@@ -51,31 +53,37 @@ job_queue = updater.job_queue
 
 
 def getDirectURLVideo(URL):
-    try:
-        print('Using youtube-dl...')
-        with ydl:
-            result = ydl.extract_info(
-                '{}'.format(URL),
-                download=False # We just want to extract the info
-            )
 
-        if 'entries' in result:
-            # Can be a playlist or a list of videos
-            video = result['entries'][0]
-        else:
-            # Just a video
-            video = result
+    print('Using youtube-dl...')
+    with ydl:
+        result = ydl.extract_info(
+            '{}'.format(URL),
+            download=False # We just want to extract the info
+        )
 
-        video_url = video['url']
+    if 'entries' in result:
+        # Can be a playlist or a list of videos
+        video = result['entries'][0]
+    else:
+        # Just a video
+        video = result
 
-        return video_url
+    video_url = video['url']
 
-    except:
-        print('Error in youtube-dl, skipping video...')
+    return video_url
 
 
 def checkIfAllowedAndPost(post, bot, chat_id):
-    if post['type'] == 'photo' and allow_photo:
+    if 'parent_id' in post and allow_shared:
+        print('This is a shared post.')
+        parent_post = graph.get_object(
+            id=post['parent_id'],
+            fields='full_picture,created_time,type,\
+                    message,source,link,caption,parent_id')
+        print('Accessing parent post...')
+        checkIfAllowedAndPost(parent_post, bot, chat_id)
+        return True
+    elif post['type'] == 'photo' and allow_photo:
         print('This is a photo')
         postPhotoToChat(post, bot, chat_id)
         return True
@@ -84,10 +92,25 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         postVideoToChat(post, bot, chat_id)
         return True
     elif post['type'] == 'status' and allow_status:
+        print('This is a status')
+        print('Posting status...')
         bot.send_message(
             chat_id=chat_id,
-            text=post['message']
-            )
+            text=post['message'])
+        return True
+    elif post['type'] == 'link' and allow_link:
+        print('This is a link')
+        #External link
+        if 'message' in post:
+            post_message = post['message']
+            print('Posting link with message...')
+        else:
+            post_message = ''
+            print('Posting link...')
+
+        bot.send_message(
+            chat_id=chat_id,
+            text=post['link']+'\n'+post_message)
         return True
     else:
         print('This post is a {}, skipping...'.format(post['type']))
@@ -96,16 +119,16 @@ def checkIfAllowedAndPost(post, bot, chat_id):
 
 def postPhotoToChat(post, bot, chat_id):
     if 'message' in post:
-        post_caption = post['message']
+        post_message = post['message']
         print('Posting photo with message...')
     else:
-        post_caption = None
+        post_message = ''
         print('Posting photo...')
 
     bot.send_photo(
         chat_id=chat_id,
         photo=post['full_picture'],
-        caption=post_caption)
+        caption=post_message)
 
 
 def postVideoToChat(post, bot, chat_id):
@@ -114,22 +137,21 @@ def postVideoToChat(post, bot, chat_id):
         print('Sending YouTube link...')
         bot.send_message(
             chat_id=chat_id,
-            text=post['link']
-            )
+            text=post['link'])
 
     else:
         if 'message' in post:
-            post_caption = post['message']
+            post_message = post['message']
             print('Posting video with message...')
         else:
-            post_caption = None
+            post_message = ''
             print('Posting video...')
 
         try:
             bot.send_video(
                 chat_id=chat_id,
                 video=post['source'],
-                caption=post_caption)
+                caption=post_message)
         except TelegramError:        #If the API can't send the video
             print('Could not post video')
             print('Trying with youtube-dl...')
@@ -137,12 +159,12 @@ def postVideoToChat(post, bot, chat_id):
                 bot.send_video(
                     chat_id=chat_id,
                     video=getDirectURLVideo(post['link']),
-                    caption=post_caption)
+                    caption=post_message)
             except TelegramError:    #If the API still can't send the video
                 print('Could not post video, sending direct link...')
                 bot.send_message(    #Send direct link as a message
                         chat_id=chat_id,
-                        text=post['source']+'\n'+post_caption)
+                        text=post['source']+'\n'+post_message)
 
 
 def postToChatAndSleep(post, bot, chat_id, sleeptime):
@@ -152,7 +174,7 @@ def postToChatAndSleep(post, bot, chat_id, sleeptime):
 
 
 #Posts last 25 media posts from every Facebook page in botsettings.ini
-@run_async
+#@run_async
 def last25(bot, job):
     chat_id = job.context
     
@@ -161,7 +183,7 @@ def last25(bot, job):
         ids=facebook_pages,
         fields='name,posts{\
                            full_picture,created_time,type,\
-                           message,source,link,caption}')
+                           message,source,link,caption,parent_id}')
     
     for page in facebook_pages:
         try:
@@ -174,8 +196,8 @@ def last25(bot, job):
             for post in reversed(posts_data):   #Chronological order
                 postToChatAndSleep(post, bot, chat_id, 1)
 
-        except:
-            print('Page error.')
+        except KeyError:
+            print('Page not found.')
             continue
 
 
