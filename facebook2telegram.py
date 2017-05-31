@@ -4,6 +4,7 @@ import ast                                      #Used for ini settings
 import ConfigParser
 import logging
 from time import sleep
+import sys
 #from datetime import datetime                   #Used for date comparison
 
 import telegram                                 #telegram-bot-python
@@ -11,7 +12,7 @@ from telegram.ext import Updater
 from telegram.ext import CommandHandler
 from telegram.ext import Job
 #from telegram.ext.dispatcher import run_async   #Needed for parallelism
-from telegram.error import (TelegramError)      #Error handling
+from telegram.error import (TelegramError, InvalidToken, BadRequest)      #Error handling
 
 import facebook                                 #facebook-sdk
 
@@ -27,20 +28,33 @@ logger = logging.getLogger(__name__)
 ydl = youtube_dl.YoutubeDL({'outtmpl': '%(id)s%(ext)s'})
 
 #Read config file
-Config = ConfigParser.ConfigParser()
+Config = ConfigParser.SafeConfigParser()
 Config.read('botsettings.ini')
 
-#Facebook
-facebook_token = Config.get('facebook', 'token')
-facebook_pages = ast.literal_eval(Config.get("facebook", "pages"))
-facebook_refresh_rate = Config.get('facebook', 'refreshrate')
-allow_status = Config.getboolean('facebook', 'status')
-allow_photo = Config.getboolean('facebook', 'photo')
-allow_video = Config.getboolean('facebook', 'video')
-allow_link = Config.getboolean('facebook', 'link')
-allow_shared = Config.getboolean('facebook', 'shared')
-allow_message = Config.getboolean('facebook', 'message')
+#Load settings file
+try:
+    facebook_token = Config.get('facebook', 'token')
+    facebook_pages = ast.literal_eval(Config.get("facebook", "pages"))
+    facebook_refresh_rate = Config.get('facebook', 'refreshrate')
+    allow_status = Config.getboolean('facebook', 'status')
+    allow_photo = Config.getboolean('facebook', 'photo')
+    allow_video = Config.getboolean('facebook', 'video')
+    allow_link = Config.getboolean('facebook', 'link')
+    allow_shared = Config.getboolean('facebook', 'shared')
+    allow_message = Config.getboolean('facebook', 'message')
+    telegram_token = Config.get('telegram', 'token')
+    channel_id = Config.get('telegram', 'channel')
+except ConfigParser.NoSectionError:
+    sys.exit('Fatal Error: Missing or invalid settings file.')
+except ConfigParser.NoOptionError:
+    sys.exit('Fatal Error: Missing or invalid option in settings file.')
+except ValueError:
+    sys.exit('Fatal Error: Missing or invalid value in settings file.')
+except SyntaxError:
+    sys.exit('Fatal Error: Syntax error in page list.')
+
 print('Loaded settings:')
+print('Channel: ' + channel_id)
 print('Refresh rate: ' + facebook_refresh_rate)
 print('Allow Status: ' + str(allow_status))
 print('Allow Photo: ' + str(allow_photo))
@@ -48,14 +62,17 @@ print('Allow Video: ' + str(allow_video))
 print('Allow Link: ' + str(allow_link))
 print('Allow Shared: ' + str(allow_shared))
 print('Allow Message: ' + str(allow_message))
+
+#Facebook
 graph = facebook.GraphAPI(access_token=facebook_token, version='2.7')
 #page_count = 0
 #last_date_tg = 0
 
 #Telegram
-telegram_token = Config.get('telegram', 'token')
-channel_id = Config.get('telegram', 'channel')
-bot = telegram.Bot(token=telegram_token)
+try:
+    bot = telegram.Bot(token=telegram_token)
+except InvalidToken:
+   sys.exit('Fatal Error: Invalid Telegram Token')
 updater = Updater(token=telegram_token)
 dispatcher = updater.dispatcher
 job_queue = updater.job_queue
@@ -112,7 +129,7 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         return True
     elif post['type'] == 'link' and allow_link:
         print('Posting link...')
-        postLinkToChat(post, post_message, bot, chat_id)        
+        postLinkToChat(post, post_message, bot, chat_id)
         return True
     else:
         print('This post is a {}, skipping...'.format(post['type']))
@@ -176,12 +193,15 @@ def postToChatAndSleep(post, bot, chat_id, sleeptime):
 def last25(bot, job):
     chat_id = job.context
     print('Accessing Facebook...')
-    pages_dict = graph.get_objects(
-        ids=facebook_pages,
-        fields='name,posts{\
-                           full_picture,created_time,type,\
-                           message,source,link,caption,parent_id}')
-    
+    try:
+        pages_dict = graph.get_objects(
+            ids=facebook_pages,
+            fields='name,posts{\
+                               full_picture,created_time,type,\
+                               message,source,link,caption,parent_id}')
+    except facebook.GraphAPIError:
+        print('Error: Could not get Facebook posts.')
+        return
     for page in facebook_pages:
         try:
             print('Getting list of posts for page {}...'.format(
@@ -191,7 +211,11 @@ def last25(bot, job):
             posts_data = pages_dict[page]['posts']['data']
 
             for post in reversed(posts_data):   #Chronological order
-                postToChatAndSleep(post, bot, chat_id, 1)
+                try:
+                    postToChatAndSleep(post, bot, chat_id, 1)
+                except BadRequest:
+                    print('Error: Telegram chat not found')
+                    return
 
         except KeyError:
             print('Page not found.')
