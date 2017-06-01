@@ -5,7 +5,7 @@ import ConfigParser
 import logging
 from time import sleep
 import sys
-#from datetime import datetime                   #Used for date comparison
+from datetime import datetime                   #Used for date comparison
 
 import telegram                                 #telegram-bot-python
 from telegram.ext import Updater
@@ -31,6 +31,8 @@ ydl = youtube_dl.YoutubeDL({'outtmpl': '%(id)s%(ext)s'})
 Config = ConfigParser.SafeConfigParser()
 Config.read('botsettings.ini')
 
+
+
 #Load settings file
 try:
     facebook_token = Config.get('facebook', 'token')
@@ -53,6 +55,33 @@ except ValueError:
 except SyntaxError:
     sys.exit('Fatal Error: Syntax error in page list.')
 
+#Facebook
+graph = facebook.GraphAPI(access_token=facebook_token, version='2.7')
+#page_count = 0
+#last_date_tg = 0
+
+
+def parsePostDate(post):
+    post_date = datetime.strptime(post['created_time'],
+                                  "%Y-%m-%dT%H:%M:%S+0000")
+    return post_date
+
+
+print('Getting most recent posts dates...')
+last_post_date = {}
+last_posts = graph.get_objects(
+            ids=facebook_pages,
+            fields='name,posts.limit(1){created_time}')
+for page in facebook_pages:
+    try:
+        last_post_date[page] = parsePostDate(last_posts[page]['posts']['data'][0])
+        print('Page: '+last_posts[page]['name'])
+        print('Last updated: '+last_post_date[page].strftime('%Y-%m-%d %H:%M:%S +0')+'\n')
+        
+    except KeyError:
+        print('Page '+page+' not found.')
+
+#print (last_post_date)
 print('Loaded settings:')
 print('Channel: ' + channel_id)
 print('Refresh rate: ' + facebook_refresh_rate)
@@ -62,11 +91,6 @@ print('Allow Video: ' + str(allow_video))
 print('Allow Link: ' + str(allow_link))
 print('Allow Shared: ' + str(allow_shared))
 print('Allow Message: ' + str(allow_message))
-
-#Facebook
-graph = facebook.GraphAPI(access_token=facebook_token, version='2.7')
-#page_count = 0
-#last_date_tg = 0
 
 #Telegram
 try:
@@ -154,23 +178,23 @@ def postPhotoToChat(post, post_message, bot, chat_id):
 
 
 def postVideoToChat(post, post_message, bot, chat_id):
-'''This function tries to pass 3 different URLs to the Telegram API
-   instead of downloading the video file locally to save bandwidth.
-   First link: Direct video source
-   Second link: Direct video source gotten from youtube-dl
-   Third link: Direct video source with smaller resolution
-   If all three fail, it then (TODO: 4th OPTION - DOWNLOAD FILE LOCALLY
-   FOR UPLOAD) sends the first link as a message, followed by the post's
-   message'''
-    direct_link = getDirectURLVideo(post['object_id'])
+    #This function tries to pass 3 different URLs to the Telegram API
+    #instead of downloading the video file locally to save bandwidth.
+    #First link: Direct video source
+    #Second link: Direct video source gotten from youtube-dl
+    #Third link: Direct video source with smaller resolution
+    #If all three fail, it then (TODO: 4th OPTION - DOWNLOAD FILE LOCALLY
+    #FOR UPLOAD) sends the first link as a message, followed by the post's
+    #message
     #If youtube link, post the link
     if 'caption' in post and post['caption'] == 'youtube.com':
         print('Sending YouTube link...')
         bot.send_message(
             chat_id=chat_id,
             text=post['link'])
-
     else:
+        if 'object_id' in post:
+            direct_link = getDirectURLVideo(post['object_id'])
         try:
             bot.send_video(
                 chat_id=chat_id,
@@ -212,10 +236,12 @@ def postToChatAndSleep(post, bot, chat_id, sleeptime):
         print('Sleeping...')
         sleep(sleeptime)
 
+def postToChat(post, bot, chat_id):
+    if checkIfAllowedAndPost(post, bot, chat_id):
+        print('Posted.')
 
-#Posts last 25 media posts from every Facebook page in botsettings.ini
-#@run_async
-def last25(bot, job):
+
+def periodicCheck(bot, job):
     chat_id = job.context
     print('Accessing Facebook...')
     try:
@@ -234,10 +260,15 @@ def last25(bot, job):
             
             #Get list of last 25 posts
             posts_data = pages_dict[page]['posts']['data']
-
-            for post in reversed(posts_data):   #Chronological order
+            new_posts = filter(lambda post: parsePostDate(post) > last_post_date[page], posts_data)
+            if not new_posts:
+                print('No new posts.')
+                continue
+            for post in reversed(new_posts):   #Chronological order
                 try:
-                    postToChatAndSleep(post, bot, chat_id, 1)
+                    print('Posting NEW post...')
+                    postToChat(post, bot, chat_id)
+                    last_post_date[page] = parsePostDate(post)
                 except BadRequest:
                     print('Error: Telegram chat not found')
                     return
@@ -247,22 +278,10 @@ def last25(bot, job):
             continue
 
 
-def last25_job(bot, update, job_queue):
-    update.message.reply_text('Sending...')
-
-    job_last25 = Job(last25, 0.0, repeat=False,
-                     context=channel_id)
-    job_queue.put(job_last25)
-
-
-def periodicUpdate(bot, job):
-    bot.send_message(chat_id=job.context, text="This is a periodic update.")
-
-
 def createSubscription(bot, update, job_queue, chat_data):
     job_checkNew = Job(
-        periodicUpdate, facebook_refresh_rate,
-        repeat=True, context=update.message.chat_id)
+        periodicCheck, float(facebook_refresh_rate),
+        repeat=True, context=channel_id)
     job_queue.put(job_checkNew)
     chat_data['job'] = job_checkNew
 
@@ -286,15 +305,12 @@ def error(bot, update, error):
     
 
 # on different commands - answer in Telegram
-last25_handler = CommandHandler('ultimos', last25_job,
-                                pass_job_queue=True)
 subscription_handler = CommandHandler('subscribe', createSubscription,
                                       pass_job_queue=True,
                                       pass_chat_data=True)
 unsubscribe_handler = CommandHandler('unsubscribe', deleteSubscription,
                                      pass_chat_data=True)
 # on command message
-dispatcher.add_handler(last25_handler)
 dispatcher.add_handler(subscription_handler)
 dispatcher.add_handler(unsubscribe_handler)
 # log all errors
