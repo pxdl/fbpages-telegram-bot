@@ -1,3 +1,4 @@
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/8ac2d511d2ea4946b3d1a09fc6f5434b)](https://www.codacy.com/app/mateus_pereira/fbpages-telegram-bot?utm_source=github.com&utm_medium=referral&utm_content=s1cp/fbpages-telegram-bot&utm_campaign=badger)
 [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/s1cp/FacebookPages2Telegram/master/LICENSE)
 [![Python Versions](https://img.shields.io/badge/python-3.4%2C%203.5%2C%203.6-blue.svg)](https://docs.python.org/3/)
 [![Contact me on Telegram](https://img.shields.io/badge/Contact-Telegram-blue.svg)](https://t.me/s1cp0)
