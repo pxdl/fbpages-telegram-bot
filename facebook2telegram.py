@@ -3,6 +3,7 @@ import ast                                      #Used for pages list in ini
 import configparser                             #Used for loading configs
 import json                                     #Used for tacking last dates
 import logging                                  #Used for logging
+from os import remove
 import sys                                      #Used for exiting the program
 from datetime import datetime                   #Used for date comparison
 from urllib import request                      #Used for downloading media
@@ -20,6 +21,8 @@ import facebook                                 #facebook-sdk
 import youtube_dl                               #youtube-dl
 
 
+#Global Variables
+
 #Logging
 logging.basicConfig(
     filename='facebook2telegram.log',
@@ -30,6 +33,16 @@ logger = logging.getLogger(__name__)
 #youtube-dl
 ydl = youtube_dl.YoutubeDL({'outtmpl': '%(id)s%(ext)s'})
 
+graph = None
+settings = {}
+start_time = None
+facebook_pages = None
+last_posts_dates = {}
+bot = None
+updater = None
+dispatcher = None
+job_queue = None
+
 
 def loadSettingsFile(filename):
     '''
@@ -38,48 +51,39 @@ def loadSettingsFile(filename):
     Use example.botsettings.ini as an example.
     '''
     #Read config file
-    Config = configparser.SafeConfigParser()
-    Config.read(filename)
+    config = configparser.SafeConfigParser()
+    config.read(filename)
+
+    global settings
 
     #Load config
     try:
-        global facebook_token
-        global facebook_pages
-        global facebook_refresh_rate
-        global allow_status
-        global allow_photo
-        global allow_video
-        global allow_link
-        global allow_shared
-        global allow_message
-        global telegram_token
-        global channel_id
-        global admin_id
-
-        facebook_token = Config.get('facebook', 'token')
-        facebook_pages = ast.literal_eval(Config.get("facebook", "pages"))
-        facebook_refresh_rate = float(Config.get('facebook', 'refreshrate'))
-        allow_status = Config.getboolean('facebook', 'status')
-        allow_photo = Config.getboolean('facebook', 'photo')
-        allow_video = Config.getboolean('facebook', 'video')
-        allow_link = Config.getboolean('facebook', 'link')
-        allow_shared = Config.getboolean('facebook', 'shared')
-        allow_message = Config.getboolean('facebook', 'message')
-        telegram_token = Config.get('telegram', 'token')
-        channel_id = Config.get('telegram', 'channel')
-        admin_id = Config.get('telegram', 'admin')
+        settings['facebook_token'] = config.get('facebook', 'token')
+        settings['facebook_pages'] = ast.literal_eval(
+                                        config.get("facebook", "pages"))
+        settings['facebook_refresh_rate'] = float(
+                                        config.get('facebook', 'refreshrate'))
+        settings['allow_status'] = config.getboolean('facebook', 'status')
+        settings['allow_photo'] = config.getboolean('facebook', 'photo')
+        settings['allow_video'] = config.getboolean('facebook', 'video')
+        settings['allow_link'] = config.getboolean('facebook', 'link')
+        settings['allow_shared'] = config.getboolean('facebook', 'shared')
+        settings['allow_message'] = config.getboolean('facebook', 'message')
+        settings['telegram_token'] = config.get('telegram', 'token')
+        settings['channel_id'] = config.get('telegram', 'channel')
+        settings['admin_id'] = config.get('telegram', 'admin')
 
         print('Loaded settings:')
-        print('Channel: ' + channel_id)
-        print('Refresh rate: ' + str(facebook_refresh_rate))
-        print('Allow Status: ' + str(allow_status))
-        print('Allow Photo: ' + str(allow_photo))
-        print('Allow Video: ' + str(allow_video))
-        print('Allow Link: ' + str(allow_link))
-        print('Allow Shared: ' + str(allow_shared))
-        print('Allow Message: ' + str(allow_message))
-
-        return True
+        if settings['admin_id']:
+            print('Admin ID: ' + settings['admin_id'] )
+        print('Channel: ' + settings['channel_id'])
+        print('Refresh rate: ' + str(settings['facebook_refresh_rate']))
+        print('Allow Status: ' + str(settings['allow_status']))
+        print('Allow Photo: ' + str(settings['allow_photo']))
+        print('Allow Video: ' + str(settings['allow_video']))
+        print('Allow Link: ' + str(settings['allow_link']))
+        print('Allow Shared: ' + str(settings['allow_shared']))
+        print('Allow Message: ' + str(settings['allow_message']))
 
     except configparser.NoSectionError:
         sys.exit('Fatal Error: Missing or invalid settings file.')
@@ -106,14 +110,15 @@ def loadTelegramBot(telegram_token):
     '''
     Initialize Telegram Bot API with the token loaded from the settings file
     '''
-    global bot
     global updater
     global dispatcher
     global job_queue
+    
     try:
         bot = telegram.Bot(token=telegram_token)
     except InvalidToken:
        sys.exit('Fatal Error: Invalid Telegram Token')
+    
     updater = Updater(token=telegram_token)
     dispatcher = updater.dispatcher
     job_queue = updater.job_queue
@@ -141,7 +146,7 @@ class dateTimeEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def dateTimeDecoder(pairs, format="%Y-%m-%dT%H:%M:%S"):
+def dateTimeDecoder(pairs, date_format="%Y-%m-%dT%H:%M:%S"):
     '''
     Converts the ISO timestamp to 'datetime' type for the JSON loader
     '''
@@ -150,7 +155,7 @@ def dateTimeDecoder(pairs, format="%Y-%m-%dT%H:%M:%S"):
     for k, v in pairs:
         if isinstance(v, str):
             try:
-                d[k] = datetime.strptime(v, format)
+                d[k] = datetime.strptime(v, date_format)
             except ValueError:
                 d[k] = v
         else:
@@ -159,30 +164,32 @@ def dateTimeDecoder(pairs, format="%Y-%m-%dT%H:%M:%S"):
     return d
 
 
-def loadDatesJSON():
+def loadDatesJSON(last_posts_dates, filename):
     '''
     Loads the .json file containing the latest post's date for every page
     loaded from the settings file to the 'last_posts_dates' dict
     '''
-    global last_posts_dates
-    with open('dates.json', 'r') as f:
-        last_posts_dates = json.load(f, object_pairs_hook=dateTimeDecoder)
+    with open(filename, 'r') as f:
+        loaded_json = json.load(f, object_pairs_hook=dateTimeDecoder)
+    
     print('Loaded JSON file.')
+    return loaded_json
 
 
-def dumpDatesJSON():
+def dumpDatesJSON(last_posts_dates, filename):
     '''
     Dumps the 'last_posts_dates' dict to a .json file containing the
     latest post's date for every page loaded from the settings file.
     '''
-    global last_posts_dates
-    with open('dates.json', 'w') as f:
+    with open(filename, 'w') as f:
         json.dump(last_posts_dates, f,
                   sort_keys=True, indent=4, cls=dateTimeEncoder)
+    
     print('Dumped JSON file.')
+    return True
 
 
-def getMostRecentPostsDates():
+def getMostRecentPostsDates(facebook_pages, filename):
     '''
     Gets the date for the most recent post for every page loaded from the
     settings file. If there is a 'dates.json' file, load it. If not, fetch
@@ -192,11 +199,8 @@ def getMostRecentPostsDates():
     '''
     print('Getting most recent posts dates...')
 
-    global last_posts_dates
     global start_time
-
-    start_time = None
-    last_posts_dates = {}
+    global last_posts_dates
 
     last_posts = graph.get_objects(
                 ids=facebook_pages,
@@ -205,7 +209,7 @@ def getMostRecentPostsDates():
     print('Trying to load JSON file...')
 
     try:
-        loadDatesJSON()
+        last_posts_dates = loadDatesJSON(last_posts_dates, filename)
 
         for page in facebook_pages:
             if page not in last_posts_dates:
@@ -215,7 +219,7 @@ def getMostRecentPostsDates():
                     last_post = last_posts[page]['posts']['data'][0]
                     last_posts_dates[page] = parsePostDate(last_post)
                     print('Page: '+last_posts[page]['name']+' went online.')
-                    dumpDatesJSON()
+                    dumpDatesJSON(last_posts_dates, filename)
                 except KeyError:
                     print('Page '+page+' not found.')
 
@@ -232,7 +236,7 @@ def getMostRecentPostsDates():
             except KeyError:
                 print('Page '+page+' not found.')
 
-        dumpDatesJSON()
+        dumpDatesJSON(last_posts_dates, filename)
 
 
 def getDirectURLVideo(video_id):
@@ -272,7 +276,7 @@ def postPhotoToChat(post, post_message, bot, chat_id):
     try:
         bot.send_photo(
             chat_id=chat_id,
-            photo=post['full_picture'],
+            photo=direct_link,
             caption=post_message)
 
     except BadRequest:
@@ -282,23 +286,25 @@ def postPhotoToChat(post, post_message, bot, chat_id):
             print('Sending by URL failed, downloading file...')
             request.urlretrieve(direct_link, 'temp.jpg')
             print('Sending file...')
-            picture = open('temp.jpg', 'rb')
-            bot.send_photo(
-                chat_id=chat_id,
-                photo=picture,
-                caption=post_message)
+            with open('temp.jpg', 'rb') as picture:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=picture,
+                    caption=post_message)
+            remove('temp.jpg')   #Delete the temp picture
 
         except TimedOut:
             '''If there is a timeout, try again with a higher
             timeout value for 'bot.send_photo' '''
             print('File upload timed out, trying again...')
             print('Sending file...')
-            picture = open('temp.jpg', 'rb')
-            bot.send_photo(
-                chat_id=chat_id,
-                photo=picture,
-                caption=post_message,
-                timeout=60)
+            with open('temp.jpg', 'rb') as picture:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=picture,
+                    caption=post_message,
+                    timeout=60)
+            remove('temp.jpg')   #Delete the temp picture
 
         except BadRequest:
             raise
@@ -383,7 +389,7 @@ def checkIfAllowedAndPost(post, bot, chat_id):
     settings file, then calls the appropriate function for each type.
     '''
     #If it's a shared post, call this function for the parent post
-    if 'parent_id' in post and allow_shared:
+    if 'parent_id' in post and settings['allow_shared']:
         print('This is a shared post.')
         parent_post = graph.get_object(
             id=post['parent_id'],
@@ -396,26 +402,26 @@ def checkIfAllowedAndPost(post, bot, chat_id):
     '''If there's a message in the post, and it's allowed by the
     settings file, store it in 'post_message', which will be passed to
     another function based on the post type.'''
-    if 'message' in post and allow_message:
+    if 'message' in post and settings['allow_message']:
         post_message = post['message']
     else:
         post_message = ''
 
-    if post['type'] == 'photo' and allow_photo:
+    if post['type'] == 'photo' and settings['allow_photo']:
         print('Posting photo...')
         postPhotoToChat(post, post_message, bot, chat_id)
         return True
-    elif post['type'] == 'video' and allow_video:
+    elif post['type'] == 'video' and settings['allow_video']:
         print('Posting video...')
         postVideoToChat(post, post_message, bot, chat_id)
         return True
-    elif post['type'] == 'status' and allow_status:
+    elif post['type'] == 'status' and settings['allow_status']:
         print('Posting status...')
         bot.send_message(
             chat_id=chat_id,
             text=post['message'])
         return True
-    elif post['type'] == 'link' and allow_link:
+    elif post['type'] == 'link' and settings['allow_link']:
         print('Posting link...')
         postLinkToChat(post, post_message, bot, chat_id)
         return True
@@ -453,11 +459,11 @@ def periodicCheck(bot, job):
                           source,link,caption,parent_id,object_id}')
 
         #If there is an admin chat ID in the settings file
-        if admin_id:
+        if settings['admin_id']:
             try:
                 #Sends a message to the bot Admin confirming the action
                 bot.send_message(
-                    chat_id=admin_id,
+                    chat_id=settings['admin_id'],
                     text='Successfully fetched Facebook posts.')
 
             except TelegramError:
@@ -519,10 +525,10 @@ def periodicCheck(bot, job):
 
     #After iterating through all pages
     if needDump:
-        dumpDatesJSON()
+        dumpDatesJSON(last_posts_dates, 'dates.json')
 
     print('Checked all pages. Next check in '
-          +str(facebook_refresh_rate)
+          +str(settings['facebook_refresh_rate'])
           +' seconds.')
 
 
@@ -530,13 +536,13 @@ def createCheckJob(bot):
     '''
     Creates a job that periodically calls the 'periodicCheck' function
     '''
-    job_queue.run_repeating(periodicCheck, facebook_refresh_rate,
-                            first=start_time, context=channel_id)
+    job_queue.run_repeating(periodicCheck, settings['facebook_refresh_rate'],
+                            first=start_time, context=settings['channel_id'])
     print('Job created.')
-    if admin_id:
+    if settings['admin_id']:
         try:
             bot.send_message(
-                chat_id=admin_id,
+                chat_id=settings['admin_id'],
                 text='Bot Started.')
         except TelegramError:
             print('Admin ID not found.')
@@ -548,10 +554,13 @@ def error(bot, update, error):
 
 
 def main():
+    global facebook_pages
     loadSettingsFile('botsettings.ini')
-    loadFacebookGraph(facebook_token)
-    loadTelegramBot(telegram_token)
-    getMostRecentPostsDates()
+    loadFacebookGraph(settings['facebook_token'])  
+    loadTelegramBot(settings['telegram_token'])
+    facebook_pages = settings['facebook_pages']
+
+    getMostRecentPostsDates(facebook_pages, 'dates.json')
 
     createCheckJob(bot)
 
