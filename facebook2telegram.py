@@ -10,7 +10,6 @@ from urllib import request                      #Used for downloading media
 
 import telegram                                 #telegram-bot-python
 from telegram.ext import Updater
-from telegram.ext import Job
 from telegram.error import TelegramError        #Error handling
 from telegram.error import InvalidToken         #Error handling
 from telegram.error import BadRequest           #Error handling
@@ -110,15 +109,16 @@ def loadTelegramBot(telegram_token):
     '''
     Initialize Telegram Bot API with the token loaded from the settings file
     '''
+    global bot
     global updater
     global dispatcher
     global job_queue
-    
+
     try:
         bot = telegram.Bot(token=telegram_token)
     except InvalidToken:
        sys.exit('Fatal Error: Invalid Telegram Token')
-    
+
     updater = Updater(token=telegram_token)
     dispatcher = updater.dispatcher
     job_queue = updater.job_queue
@@ -171,7 +171,7 @@ def loadDatesJSON(last_posts_dates, filename):
     '''
     with open(filename, 'r') as f:
         loaded_json = json.load(f, object_pairs_hook=dateTimeDecoder)
-    
+
     print('Loaded JSON file.')
     return loaded_json
 
@@ -184,7 +184,7 @@ def dumpDatesJSON(last_posts_dates, filename):
     with open(filename, 'w') as f:
         json.dump(last_posts_dates, f,
                   sort_keys=True, indent=4, cls=dateTimeEncoder)
-    
+
     print('Dumped JSON file.')
     return True
 
@@ -307,7 +307,6 @@ def postPhotoToChat(post, post_message, bot, chat_id):
             remove('temp.jpg')   #Delete the temp picture
 
         except BadRequest:
-            raise
             print('Could not send photo file, sending link...')
             bot.send_message(    #Send direct link as a message
                 chat_id=chat_id,
@@ -485,7 +484,6 @@ def periodicCheck(bot, job):
         workaround is to create an Extended Page Access Token instad of an
         App Token, with the downside of having to renew it every two months.
         '''
-        raise
         return
 
     #Iterate every page in the list loaded from the settings file
@@ -556,7 +554,7 @@ def error(bot, update, error):
 def main():
     global facebook_pages
     loadSettingsFile('botsettings.ini')
-    loadFacebookGraph(settings['facebook_token'])  
+    loadFacebookGraph(settings['facebook_token'])
     loadTelegramBot(settings['telegram_token'])
     facebook_pages = settings['facebook_pages']
 
