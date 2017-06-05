@@ -4,7 +4,9 @@ import configparser                             #Used for loading configs
 import json                                     #Used for tacking last dates
 import logging                                  #Used for logging
 from os import remove
+from os import path
 import sys                                      #Used for exiting the program
+from time import sleep
 from datetime import datetime                   #Used for date comparison
 from urllib import request                      #Used for downloading media
 
@@ -32,8 +34,11 @@ logger = logging.getLogger(__name__)
 #youtube-dl
 ydl = youtube_dl.YoutubeDL({'outtmpl': '%(id)s%(ext)s'})
 
-graph = None
 settings = {}
+dir_path = None
+settings_path = None
+dates_path = None
+graph = None
 start_time = None
 facebook_pages = None
 last_posts_dates = {}
@@ -274,44 +279,47 @@ def postPhotoToChat(post, post_message, bot, chat_id):
     direct_link = post['full_picture']
 
     try:
-        bot.send_photo(
+        message = bot.send_photo(
             chat_id=chat_id,
             photo=direct_link,
             caption=post_message)
+        return message
 
     except BadRequest:
         '''If the picture can't be sent using its URL,
         it is downloaded locally and uploaded to Telegram.'''
         try:
             print('Sending by URL failed, downloading file...')
-            request.urlretrieve(direct_link, 'temp.jpg')
+            request.urlretrieve(direct_link, dir_path+'/temp.jpg')
             print('Sending file...')
-            with open('temp.jpg', 'rb') as picture:
-                bot.send_photo(
+            with open(dir_path+'/temp.jpg', 'rb') as picture:
+                message = bot.send_photo(
                     chat_id=chat_id,
                     photo=picture,
                     caption=post_message)
-            remove('temp.jpg')   #Delete the temp picture
+            remove(dir_path+'/temp.jpg')   #Delete the temp picture
+            return message
 
         except TimedOut:
             '''If there is a timeout, try again with a higher
             timeout value for 'bot.send_photo' '''
             print('File upload timed out, trying again...')
             print('Sending file...')
-            with open('temp.jpg', 'rb') as picture:
-                bot.send_photo(
+            with open(dir_path+'/temp.jpg', 'rb') as picture:
+                message = bot.send_photo(
                     chat_id=chat_id,
                     photo=picture,
                     caption=post_message,
                     timeout=60)
-            remove('temp.jpg')   #Delete the temp picture
+            remove(dir_path+'/temp.jpg')   #Delete the temp picture
+            return message
 
         except BadRequest:
             print('Could not send photo file, sending link...')
             bot.send_message(    #Send direct link as a message
                 chat_id=chat_id,
                 text=direct_link+'\n'+post_message)
-            return
+            return message
 
 
 def postVideoToChat(post, post_message, bot, chat_id):
@@ -338,32 +346,36 @@ def postVideoToChat(post, post_message, bot, chat_id):
             direct_link = getDirectURLVideo(post['object_id'])
 
         try:
-            bot.send_video(
+            message = bot.send_video(
                 chat_id=chat_id,
                 video=direct_link,
                 caption=post_message)
+            return message
 
         except TelegramError:        #If the API can't send the video
             try:
                 print('Could not post video, trying youtube-dl...')
-                bot.send_video(
+                message = bot.send_video(
                     chat_id=chat_id,
                     video=getDirectURLVideoYDL(post['link']),
                     caption=post_message)
+                return message
 
             except TelegramError:
                 try:
                     print('Could not post video, trying smaller res...')
-                    bot.send_video(
+                    message = bot.send_video(
                         chat_id=chat_id,
                         video=post['source'],
                         caption=post_message)
+                    return message
 
                 except TelegramError:    #If it still can't send the video
                     print('Could not post video, sending link...')
-                    bot.send_message(    #Send direct link as a message
+                    message = bot.send_message(    #Send direct link as message
                         chat_id=chat_id,
                         text=direct_link+'\n'+post_message)
+                    return message
 
 
 def postLinkToChat(post, post_message, bot, chat_id):
@@ -406,13 +418,28 @@ def checkIfAllowedAndPost(post, bot, chat_id):
     else:
         post_message = ''
 
+    #Telegram doesn't allow media captions with more than 200 characters
+    #Send separate message with the post's message
+    if (len(post_message) > 200) and \
+                        (post['type'] == 'photo' or post['type'] == 'video'):
+        separate_message = post_message
+        post_message = ''
+        send_separate = True
+    else:
+        separate_message = ''
+        send_separate = False
+
     if post['type'] == 'photo' and settings['allow_photo']:
         print('Posting photo...')
-        postPhotoToChat(post, post_message, bot, chat_id)
+        media_message = postPhotoToChat(post, post_message, bot, chat_id)
+        if send_separate:
+            media_message.reply_text(separate_message)
         return True
     elif post['type'] == 'video' and settings['allow_video']:
         print('Posting video...')
-        postVideoToChat(post, post_message, bot, chat_id)
+        media_message = postVideoToChat(post, post_message, bot, chat_id)
+        if send_separate:
+            media_message.reply_text(separate_message)
         return True
     elif post['type'] == 'status' and settings['allow_status']:
         print('Posting status...')
@@ -437,6 +464,69 @@ def postToChat(post, bot, chat_id):
         print('Posted.')
 
 
+def postNewPosts(new_posts_total, chat_id):
+    global last_posts_dates
+    new_posts_total_count = len(new_posts_total)
+    
+    #Distribute posts between Facebook checks
+    if new_posts_total_count > 0:
+        time_to_sleep = settings['facebook_refresh_rate']/new_posts_total_count
+    else:
+        time_to_sleep = 0
+
+    print('Posting {} new posts to Telegram...'.format(new_posts_total_count))
+    for post in new_posts_total:
+        posts_page = post['page']
+        print('Posting NEW post from page {}...'.format(posts_page))
+        try:
+            postToChat(post, bot, chat_id)
+            last_posts_dates[posts_page] = parsePostDate(post)
+            dumpDatesJSON(last_posts_dates, dates_path)
+        except BadRequest:
+            print('Error: Telegram could not send the message')
+            #raise
+            continue
+        print('Waiting {} seconds before next post...'.format(time_to_sleep))
+        sleep(int(time_to_sleep))
+
+
+def getNewPosts(facebook_pages, pages_dict, last_posts_dates):
+    #Iterate every page in the list loaded from the settings file
+    new_posts_total = []
+    for page in facebook_pages:
+        try:
+            print('Getting list of posts for page {}...'.format(
+                                                    pages_dict[page]['name']))
+
+            #List of last 25 posts for current page. Every post is a dict.
+            posts_data = pages_dict[page]['posts']['data']
+
+            #List of posts posted after "last posted date" for current page
+            new_posts = list(filter(
+                lambda post: parsePostDate(post) > last_posts_dates[page],
+                posts_data))
+
+            if not new_posts:
+                print('No new posts for this page.')
+                continue    #Goes to next iteration (page)
+            else:
+                print('Found {} new posts for this page.'.format(len(new_posts)))
+                for post in new_posts: #For later identification
+                    post['page'] = page
+                new_posts_total = new_posts_total + new_posts
+        #If 'page' is not present in 'pages_dict' returned by the GraphAPI
+        except KeyError:
+            print('Page not found.')
+            continue
+    print('Checked all pages.')
+
+    #Sorts the list of new posts in chronological order
+    new_posts_total.sort(key=lambda post: parsePostDate(post))
+    print('Sorted posts by chronological order.')
+
+    return new_posts_total
+
+
 def periodicCheck(bot, job):
     '''
     Checks for new posts for every page in the list loaded from the
@@ -444,7 +534,7 @@ def periodicCheck(bot, job):
     contains the date for the latest post posted to Telegram for every
     page.
     '''
-    needDump = False
+    global last_posts_dates
     chat_id = job.context
     print('Accessing Facebook...')
 
@@ -486,49 +576,19 @@ def periodicCheck(bot, job):
         '''
         return
 
-    #Iterate every page in the list loaded from the settings file
-    for page in facebook_pages:
-        try:
-            print('Getting list of posts for page {}...'.format(
-                                                    pages_dict[page]['name']))
-
-            #List of last 25 posts for current page. Every post is a dict.
-            posts_data = pages_dict[page]['posts']['data']
-
-            #List of posts posted after "last posted date" for current page
-            new_posts = list(filter(
-                lambda post: parsePostDate(post) > last_posts_dates[page],
-                posts_data))
-
-            if not new_posts:
-                print('No new posts for this page.')
-                continue    #Goes to next iteration (page)
-
-            #Post the posts after the last post date in chronological order
-            for post in reversed(new_posts):
-                try:
-                    print('Posting NEW post...')
-                    postToChat(post, bot, chat_id)
-                    last_posts_dates[page] = parsePostDate(post)
-                    needDump = True
-                except BadRequest:
-                    print('Error: Telegram could not send the message')
-                    raise
-                    continue
-
-        #If 'page' is not present in 'pages_dict' returned by the GraphAPI
-        except KeyError:
-            print('Page not found.')
-            continue
-
-    #After iterating through all pages
-    if needDump:
-        dumpDatesJSON(last_posts_dates, 'dates.json')
-
-    print('Checked all pages. Next check in '
+    new_posts_total = getNewPosts(facebook_pages, pages_dict, last_posts_dates)    
+    
+    print('Checked all posts. Next check in '
           +str(settings['facebook_refresh_rate'])
           +' seconds.')
 
+    postNewPosts(new_posts_total, chat_id)
+    
+    if new_posts_total:
+        print('Posted all new posts.')
+    else:
+        print('No new posts.')
+    
 
 def createCheckJob(bot):
     '''
@@ -553,12 +613,20 @@ def error(bot, update, error):
 
 def main():
     global facebook_pages
-    loadSettingsFile('botsettings.ini')
+    global dir_path
+    global settings_path
+    global dates_path
+
+    dir_path = path.dirname(path.realpath(__file__))
+    settings_path = dir_path+'/botsettings.ini'
+    dates_path = dir_path+'/dates.json'
+
+    loadSettingsFile(settings_path)
     loadFacebookGraph(settings['facebook_token'])
     loadTelegramBot(settings['telegram_token'])
     facebook_pages = settings['facebook_pages']
 
-    getMostRecentPostsDates(facebook_pages, 'dates.json')
+    getMostRecentPostsDates(facebook_pages, dates_path)
 
     createCheckJob(bot)
 
