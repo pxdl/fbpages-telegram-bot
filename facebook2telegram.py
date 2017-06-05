@@ -16,10 +16,12 @@ from telegram.error import TelegramError        #Error handling
 from telegram.error import InvalidToken         #Error handling
 from telegram.error import BadRequest           #Error handling
 from telegram.error import TimedOut             #Error handling
+from telegram.error import NetworkError         #Error handling
 
 import facebook                                 #facebook-sdk
 
 import youtube_dl                               #youtube-dl
+from youtube_dl import utils
 
 
 #Global Variables
@@ -260,16 +262,20 @@ def getDirectURLVideoYDL(URL):
     '''
     Get direct URL for the video using youtube-dl
     '''
-    with ydl:
-        result = ydl.extract_info(URL, download=False) #Just get the link
+    try:
+        with ydl:
+            result = ydl.extract_info(URL, download=False) #Just get the link
 
-    #Check if it's a playlist
-    if 'entries' in result:
-        video = result['entries'][0]
-    else:
-        video = result
+        #Check if it's a playlist
+        if 'entries' in result:
+            video = result['entries'][0]
+        else:
+            video = result
 
-    return video['url']
+        return video['url']
+    except youtube_dl.utils.DownloadError:
+        print('youtube-dl failed to parse URL.')
+        return None
 
 
 def postPhotoToChat(post, post_message, bot, chat_id):
@@ -327,13 +333,11 @@ def postVideoToChat(post, post_message, bot, chat_id):
     This function tries to pass 3 different URLs to the Telegram API
     instead of downloading the video file locally to save bandwidth.
 
-    *First option:  Direct video source
-    *Second option: Direct video source from youtube-dl
-    *Third option:  Direct video source with smaller resolution
-
-    If all three fail, it then sends the first link as a message,
-    followed by the post's message.
-    (TODO: 4th option - Download file locally for upload)
+    *First option":  Direct video source
+    *Second option": Direct video source from youtube-dl
+    *Third option":  Direct video source with smaller resolution
+    "Fourth option": Download file locally for upload
+    "Fifth option":  Send the video link
     """
     #If youtube link, post the link
     if 'caption' in post and post['caption'] == 'youtube.com':
@@ -371,11 +375,25 @@ def postVideoToChat(post, post_message, bot, chat_id):
                     return message
 
                 except TelegramError:    #If it still can't send the video
-                    print('Could not post video, sending link...')
-                    message = bot.send_message(    #Send direct link as message
-                        chat_id=chat_id,
-                        text=direct_link+'\n'+post_message)
-                    return message
+                    try:
+                        print('Sending by URL failed, downloading file...')
+                        request.urlretrieve(post['source'],
+                                            dir_path+'/temp.mp4')
+                        print('Sending file...')
+                        with open(dir_path+'/temp.mp4', 'rb') as video:
+                            message = bot.send_video(
+                                chat_id=chat_id,
+                                video=video,
+                                caption=post_message,
+                                timeout=120)
+                        remove(dir_path+'/temp.mp4')   #Delete the temp video
+                        return message
+                    except NetworkError:
+                        print('Could not post video, sending link...')
+                        message = bot.send_message(#Send direct link as message
+                            chat_id=chat_id,
+                            text=direct_link+'\n'+post_message)
+                        return message
 
 
 def postLinkToChat(post, post_message, bot, chat_id):
@@ -467,7 +485,7 @@ def postToChat(post, bot, chat_id):
 def postNewPosts(new_posts_total, chat_id):
     global last_posts_dates
     new_posts_total_count = len(new_posts_total)
-    
+
     #Distribute posts between Facebook checks
     if new_posts_total_count > 0:
         time_to_sleep = settings['facebook_refresh_rate']/new_posts_total_count
@@ -576,19 +594,19 @@ def periodicCheck(bot, job):
         '''
         return
 
-    new_posts_total = getNewPosts(facebook_pages, pages_dict, last_posts_dates)    
-    
+    new_posts_total = getNewPosts(facebook_pages, pages_dict, last_posts_dates)
+
     print('Checked all posts. Next check in '
           +str(settings['facebook_refresh_rate'])
           +' seconds.')
 
     postNewPosts(new_posts_total, chat_id)
-    
+
     if new_posts_total:
         print('Posted all new posts.')
     else:
         print('No new posts.')
-    
+
 
 def createCheckJob(bot):
     '''
@@ -627,6 +645,14 @@ def main():
     facebook_pages = settings['facebook_pages']
 
     getMostRecentPostsDates(facebook_pages, dates_path)
+
+    test_post = graph.get_object(
+                            id='260221164385858_267564686984839',
+                            fields='created_time,type,message,full_picture,\
+                          source,link,caption,parent_id,object_id')
+
+    checkIfAllowedAndPost(test_post, bot, settings['channel_id'])
+    raise
 
     createCheckJob(bot)
 
