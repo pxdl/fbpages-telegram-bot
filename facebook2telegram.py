@@ -646,14 +646,6 @@ def main():
 
     getMostRecentPostsDates(facebook_pages, dates_path)
 
-    test_post = graph.get_object(
-                            id='260221164385858_267564686984839',
-                            fields='created_time,type,message,full_picture,\
-                          source,link,caption,parent_id,object_id')
-
-    checkIfAllowedAndPost(test_post, bot, settings['channel_id'])
-    raise
-
     createCheckJob(bot)
 
     #Log all errors
