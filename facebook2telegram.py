@@ -425,7 +425,7 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         parent_post = graph.get_object(
             id=post['parent_id'],
             fields='created_time,type,message,full_picture,story,\
-                    source,link,caption,parent_id,object_id}',
+                    source,link,caption,parent_id,object_id',
             locale=settings['locale'])
         print('Accessing parent post...')
         checkIfAllowedAndPost(parent_post, bot, chat_id)
