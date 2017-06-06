@@ -43,22 +43,23 @@ To get started with the bot itself:
 ## Bot configuration values
 ### Facebook section
 
-| Name          | Description                                                |
-|:--------------|:-----------------------------------------------------------|
-| `token`       | Facebook Graph API token.                                  |
-| `pages`       | List of page IDs. Format: `['123456789', 'pageusername']`  |
-| `refreshrate` | Time interval between every Facebook check, in seconds.    |
-| `status`      | Allow status posts. Format: `True` or `False`              |
-| `photo`       | Allow photo posts. Format: `True` or `False`               |
-| `video`       | Allow video posts. Format: `True` or `False`               |
-| `link`        | Allow link posts. Format: `True` or `False`                |
-| `shared`      | Allow shared posts. Format: `True` or `False`              |
-| `message`     | Allow message in posts. Format: `True` or `False`          |
+| Name          | Description                                                    |
+|:--------------|:---------------------------------------------------------------|
+| `locale`      | Facebook locale. Format example: `en-US`                       |
+| `token`       | Facebook Graph API token.                                      |
+| `pages`       | List of page IDs. Format example: `['123456789',pageusername']`|
+| `refreshrate` | Time interval between every Facebook check, in seconds.        |
+| `status`      | Allow status posts. Format: `True` or `False`                  |
+| `photo`       | Allow photo posts. Format: `True` or `False`                   |
+| `video`       | Allow video posts. Format: `True` or `False`                   |
+| `link`        | Allow link posts. Format: `True` or `False`                    |
+| `shared`      | Allow shared posts. Format: `True` or `False`                  |
+| `message`     | Allow message in posts. Format: `True` or `False`              |
 
 #### Telegram section
 
-| Name          | Description                                                |
-|:--------------|:-----------------------------------------------------------|
-| `token`       | Telegram Bot API token.                                    |
-| `channel`     | Username of the channel that will receive the posts        |
-| `admin`       | Optional. Bot creator's ID to receive the bot's status.    |
+| Name          | Description                                                    |
+|:--------------|:---------------------------------------------------------------|
+| `token`       | Telegram Bot API token.                                        |
+| `channel`     | Username of the channel that will receive the posts            |
+| `admin`       | Optional. Bot creator's ID to receive the bot's status.        |

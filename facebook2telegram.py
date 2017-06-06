@@ -64,6 +64,7 @@ def loadSettingsFile(filename):
 
     #Load config
     try:
+        settings['locale'] = config.get('facebook', 'locale')
         settings['facebook_token'] = config.get('facebook', 'token')
         settings['facebook_pages'] = ast.literal_eval(
                                         config.get("facebook", "pages"))
@@ -80,8 +81,9 @@ def loadSettingsFile(filename):
         settings['admin_id'] = config.get('telegram', 'admin')
 
         print('Loaded settings:')
+        print('Locale: ' + settings['locale'])
         if settings['admin_id']:
-            print('Admin ID: ' + settings['admin_id'] )
+            print('Admin ID: ' + settings['admin_id'])
         print('Channel: ' + settings['channel_id'])
         print('Refresh rate: ' + str(settings['facebook_refresh_rate']))
         print('Allow Status: ' + str(settings['allow_status']))
@@ -422,8 +424,9 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         print('This is a shared post.')
         parent_post = graph.get_object(
             id=post['parent_id'],
-            fields='full_picture,created_time,type,\
-                    message,source,link,caption,parent_id,object_id')
+            fields='created_time,type,message,full_picture,story,\
+                    source,link,caption,parent_id,object_id}',
+            locale=settings['locale'])
         print('Accessing parent post...')
         checkIfAllowedAndPost(parent_post, bot, chat_id)
         return True
@@ -461,10 +464,17 @@ def checkIfAllowedAndPost(post, bot, chat_id):
         return True
     elif post['type'] == 'status' and settings['allow_status']:
         print('Posting status...')
-        bot.send_message(
-            chat_id=chat_id,
-            text=post['message'])
-        return True
+        try:
+            bot.send_message(
+                chat_id=chat_id,
+                text=post['message'])
+            return True
+        except KeyError:
+            print('Message not found, posting story...')
+            bot.send_message(
+                chat_id=chat_id,
+                text=post['story'])
+            return True
     elif post['type'] == 'link' and settings['allow_link']:
         print('Posting link...')
         postLinkToChat(post, post_message, bot, chat_id)
@@ -562,8 +572,9 @@ def periodicCheck(bot, job):
             ids=facebook_pages,
             fields='name,\
                     posts{\
-                          created_time,type,message,full_picture,\
-                          source,link,caption,parent_id,object_id}')
+                          created_time,type,message,full_picture,story,\
+                          source,link,caption,parent_id,object_id}',
+            locale=settings['locale'])
 
         #If there is an admin chat ID in the settings file
         if settings['admin_id']:
