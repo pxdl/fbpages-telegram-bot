@@ -283,7 +283,7 @@ def postPhotoToChat(post, post_message, bot, chat_id):
     Posts the post's picture with the appropriate caption.
     '''
     direct_link = post['full_picture']
-    print(post_message)
+
     try:
         message = bot.send_photo(
             chat_id=chat_id,
