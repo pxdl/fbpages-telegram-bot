@@ -283,7 +283,7 @@ def postPhotoToChat(post, post_message, bot, chat_id):
     Posts the post's picture with the appropriate caption.
     '''
     direct_link = post['full_picture']
-
+    print(post_message)
     try:
         message = bot.send_photo(
             chat_id=chat_id,
@@ -291,7 +291,7 @@ def postPhotoToChat(post, post_message, bot, chat_id):
             caption=post_message)
         return message
 
-    except BadRequest:
+    except (BadRequest, TimedOut):
         '''If the picture can't be sent using its URL,
         it is downloaded locally and uploaded to Telegram.'''
         try:
@@ -316,7 +316,7 @@ def postPhotoToChat(post, post_message, bot, chat_id):
                     chat_id=chat_id,
                     photo=picture,
                     caption=post_message,
-                    timeout=60)
+                    timeout=120)
             remove(dir_path+'/temp.jpg')   #Delete the temp picture
             return message
 
