@@ -341,12 +341,18 @@ def postVideoToChat(post, post_message, bot, chat_id):
     "Fourth option": Download file locally for upload
     "Fifth option":  Send the video link
     """
-    #If youtube link, post the link
+    #If youtube link, post the link and short text if exists
     if 'caption' in post and post['caption'] == 'youtube.com':
-        print('Sending YouTube link...')
-        bot.send_message(
-            chat_id=chat_id,
-            text=post['link'])
+        if post_message:
+            print('Sending post message with YouTube link...')
+            bot.send_message(
+                chat_id=chat_id,
+                text=post_message)
+        else:
+            print('Sending YouTube link...')
+            bot.send_message(
+                chat_id=chat_id,
+                text=post['link'])
     else:
         if 'object_id' in post:
             direct_link = getDirectURLVideo(post['object_id'])
