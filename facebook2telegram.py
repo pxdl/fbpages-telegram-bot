@@ -428,6 +428,16 @@ def checkIfAllowedAndPost(post, bot, chat_id):
     #If it's a shared post, call this function for the parent post
     if 'parent_id' in post and settings['allow_shared']:
         print('This is a shared post.')
+
+        print("Sending shared repost's outer message")
+        try:
+            bot.send_message(
+                chat_id=chat_id,
+                text=post['message'])
+        except KeyError:
+            print('Outer message not found')
+            pass
+
         parent_post = graph.get_object(
             id=post['parent_id'],
             fields='created_time,type,message,full_picture,story,\
